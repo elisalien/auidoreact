@@ -13,6 +13,7 @@ Controls:
   S            Toggle Spout output
   R            Reset feedback buffers
   H            Toggle HUD overlay
+  Tab          Toggle parameter panel
   Space        Pause time
   Escape       Quit
 """
@@ -26,6 +27,7 @@ import numpy as np
 from audio_engine import AudioEngine
 from renderer import Renderer
 from presets import PresetManager, MODE_NAMES
+from gui import GUI
 
 
 # ─── Config ───
@@ -39,6 +41,7 @@ class App:
         self.audio = AudioEngine(smoothing=0.18)
         self.presets = PresetManager()
         self.renderer = None
+        self.gui = None
 
         self.time_val = 0.0
         self.paused = False
@@ -59,6 +62,7 @@ class App:
 
         self.renderer = Renderer(self.ctx, WINDOW_W, WINDOW_H)
         self.renderer.init_spout()
+        self.gui = GUI(self.window)
 
         self._print_info()
         self._main_loop()
@@ -93,6 +97,15 @@ class App:
 
     def _key_callback(self, window, key, scancode, action, mods):
         if action != glfw.PRESS:
+            return
+
+        # Toggle GUI panel with Tab
+        if key == glfw.KEY_TAB:
+            self.gui.visible = not self.gui.visible
+            return
+
+        # Don't process hotkeys when imgui wants keyboard
+        if self.gui and self.gui.wants_keyboard():
             return
 
         # Mode switching: 1-5
@@ -165,6 +178,7 @@ class App:
         prev_time = time.perf_counter()
 
         while not glfw.window_should_close(self.window):
+            self.gui.process_inputs()
             glfw.poll_events()
 
             # Delta time
@@ -179,8 +193,8 @@ class App:
             self.audio.update()
             self.renderer.update_spectrum(self.audio.spectrum)
 
-            # Get current preset
-            preset = self.presets.preset
+            # Get current preset with GUI overrides applied
+            preset = self.gui.get_preset_override(self.presets.preset)
             shader_file = self.presets.shader_file
             mode = self.presets.current_mode
 
@@ -195,6 +209,9 @@ class App:
             # Display
             self.renderer.blit_to_screen(fbo)
 
+            # Render GUI overlay
+            self.gui.render(self)
+
             # Update window title as simple HUD
             if self.show_hud:
                 fps = 1.0 / max(dt, 0.001)
@@ -208,6 +225,8 @@ class App:
 
     def _cleanup(self):
         self.audio.stop()
+        if self.gui:
+            self.gui.shutdown()
         if self.renderer and self.renderer.spout_sender:
             self.renderer.spout_sender.releaseSender()
         glfw.terminate()
@@ -225,6 +244,7 @@ class App:
 ║  S           Toggle Spout                    ║
 ║  R           Reset feedback                  ║
 ║  H           Toggle HUD                      ║
+║  Tab         Toggle parameters               ║
 ║  Space       Pause                           ║
 ║  Esc         Quit                            ║
 ╠══════════════════════════════════════════════╣""")
