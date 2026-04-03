@@ -16,11 +16,11 @@ call %VENV_DIR%\Scripts\activate.bat
 
 REM Install / update deps
 echo [Setup] Installing dependencies...
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+python -m pip install --quiet --upgrade pip
+python -m pip install --quiet -r requirements.txt
 
 REM Optional: install SpoutGL on Windows
-pip install --quiet SpoutGL 2>nul
+python -m pip install --quiet SpoutGL 2>nul
 
 REM Launch
 echo [Launch] Starting visualizer...
