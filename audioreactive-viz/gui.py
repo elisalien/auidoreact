@@ -5,6 +5,7 @@ Replaces console-based parameter tweaking with visual sliders.
 
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
+from OpenGL import GL as gl
 from presets import MODE_NAMES
 
 
@@ -76,8 +77,21 @@ class GUI:
         """Returns True if imgui wants mouse (hovering/clicking UI)."""
         return imgui.get_io().want_capture_mouse
 
+    def _reset_gl_state(self):
+        """Reset GL state so pyimgui's OpenGL calls don't conflict with moderngl."""
+        gl.glUseProgram(0)
+        gl.glBindVertexArray(0)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        # Drain any pending GL errors left by moderngl
+        while gl.glGetError() != gl.GL_NO_ERROR:
+            pass
+
     def render(self, app):
         """Draw the full parameter panel. Call once per frame."""
+        self._reset_gl_state()
+
         if not self.visible:
             imgui.new_frame()
             imgui.render()
@@ -171,7 +185,10 @@ class GUI:
         imgui.end()
 
         imgui.render()
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         self.impl.render(imgui.get_draw_data())
+        gl.glDisable(gl.GL_BLEND)
 
     def get_preset_override(self, preset):
         """Return a modified preset dict with current slider values applied."""
