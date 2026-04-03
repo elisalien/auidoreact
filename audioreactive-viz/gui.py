@@ -5,6 +5,8 @@ Replaces console-based parameter tweaking with visual sliders.
 
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
+from OpenGL import GL as gl
+from presets import MODE_NAMES
 
 
 # Parameter labels per mode (matches vec4 params x,y,z,w)
@@ -47,6 +49,7 @@ class GUI:
         self._initialized_from_preset = False
         self._current_mode = -1
         self._current_preset_idx = -1
+        self._cached_preset = {}  # reused dict to avoid per-frame alloc
 
     def _sync_from_preset(self, preset, mode, preset_idx, audio):
         """Reset overrides when preset/mode changes."""
@@ -74,8 +77,21 @@ class GUI:
         """Returns True if imgui wants mouse (hovering/clicking UI)."""
         return imgui.get_io().want_capture_mouse
 
+    def _reset_gl_state(self):
+        """Reset GL state so pyimgui's OpenGL calls don't conflict with moderngl."""
+        gl.glUseProgram(0)
+        gl.glBindVertexArray(0)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        # Drain any pending GL errors left by moderngl
+        while gl.glGetError() != gl.GL_NO_ERROR:
+            pass
+
     def render(self, app):
         """Draw the full parameter panel. Call once per frame."""
+        self._reset_gl_state()
+
         if not self.visible:
             imgui.new_frame()
             imgui.render()
@@ -97,7 +113,6 @@ class GUI:
         imgui.begin("Parameters", flags=imgui.WINDOW_NO_SAVED_SETTINGS)
 
         # ─── Mode & Preset ───
-        from presets import MODE_NAMES
         imgui.text_colored(f"Mode: {MODE_NAMES[mode]}", 0.4, 0.8, 1.0)
         imgui.text(f"Preset: {preset['name']}")
         imgui.separator()
@@ -170,18 +185,22 @@ class GUI:
         imgui.end()
 
         imgui.render()
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         self.impl.render(imgui.get_draw_data())
+        gl.glDisable(gl.GL_BLEND)
 
     def get_preset_override(self, preset):
         """Return a modified preset dict with current slider values applied."""
         if not self._initialized_from_preset:
             return preset
 
-        overridden = dict(preset)
-        overridden["params"] = tuple(self.overrides["params"])
-        overridden["feedback"] = self.overrides["feedback"]
-        overridden["speed"] = self.overrides["speed"]
-        return overridden
+        p = self._cached_preset
+        p.update(preset)
+        p["params"] = tuple(self.overrides["params"])
+        p["feedback"] = self.overrides["feedback"]
+        p["speed"] = self.overrides["speed"]
+        return p
 
     def shutdown(self):
         self.impl.shutdown()

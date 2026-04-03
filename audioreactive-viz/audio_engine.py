@@ -34,6 +34,15 @@ class AudioEngine:
         # Sensitivity multiplier (adjustable at runtime)
         self.sensitivity = 1.5
 
+        # Pre-computed DSP arrays (avoid per-frame allocation)
+        self._window = np.hanning(block_size).astype(np.float32)
+        freqs = np.fft.rfftfreq(block_size, 1.0 / sample_rate)
+        self._bass_mask = (freqs >= 20) & (freqs < 250)
+        self._mid_mask = (freqs >= 250) & (freqs < 4000)
+        self._high_mask = (freqs >= 4000) & (freqs < 16000)
+        self._spectrum_indices = np.linspace(0, len(freqs) - 1, 512)
+        self._fft_arange = np.arange(len(freqs))
+
         # Find device
         self.device = device
         self.stream = None
@@ -73,30 +82,24 @@ class AudioEngine:
         with self._lock:
             samples = self._buffer.copy()
 
-        # Windowed FFT
-        window = np.hanning(len(samples))
-        fft = np.abs(np.fft.rfft(samples * window))
+        # Windowed FFT (pre-computed window + masks)
+        fft = np.abs(np.fft.rfft(samples * self._window))
         fft_db = np.clip(20.0 * np.log10(fft + 1e-10) + 60.0, 0.0, 60.0) / 60.0
 
-        # Frequency bins
-        freqs = np.fft.rfftfreq(len(samples), 1.0 / self.sample_rate)
+        # Band energies (pre-computed masks)
+        sens = self.sensitivity
+        raw_bass = float(np.mean(fft_db[self._bass_mask])) * sens
+        raw_mid = float(np.mean(fft_db[self._mid_mask])) * sens
+        raw_high = float(np.mean(fft_db[self._high_mask])) * sens
+        raw_rms = float(np.sqrt(np.mean(samples * samples))) * sens * 5.0
 
-        # Band energies
-        bass_mask = (freqs >= 20) & (freqs < 250)
-        mid_mask = (freqs >= 250) & (freqs < 4000)
-        high_mask = (freqs >= 4000) & (freqs < 16000)
-
-        raw_bass = np.mean(fft_db[bass_mask]) * self.sensitivity if np.any(bass_mask) else 0.0
-        raw_mid = np.mean(fft_db[mid_mask]) * self.sensitivity if np.any(mid_mask) else 0.0
-        raw_high = np.mean(fft_db[high_mask]) * self.sensitivity if np.any(high_mask) else 0.0
-        raw_rms = np.sqrt(np.mean(samples ** 2)) * self.sensitivity * 5.0
-
-        # Smooth
+        # Smooth (scalar math, no np.clip overhead)
         s = self.smoothing
-        self.bass = self.bass * (1 - s) + np.clip(raw_bass, 0, 1) * s
-        self.mid = self.mid * (1 - s) + np.clip(raw_mid, 0, 1) * s
-        self.high = self.high * (1 - s) + np.clip(raw_high, 0, 1) * s
-        self.rms = self.rms * (1 - s) + np.clip(raw_rms, 0, 1) * s
+        inv_s = 1.0 - s
+        self.bass = self.bass * inv_s + min(max(raw_bass, 0.0), 1.0) * s
+        self.mid = self.mid * inv_s + min(max(raw_mid, 0.0), 1.0) * s
+        self.high = self.high * inv_s + min(max(raw_high, 0.0), 1.0) * s
+        self.rms = self.rms * inv_s + min(max(raw_rms, 0.0), 1.0) * s
 
         # Beat detection (onset on bass)
         bass_delta = self.bass - self._prev_bass
@@ -106,10 +109,9 @@ class AudioEngine:
             self.beat *= self._beat_decay
         self._prev_bass = self.bass
 
-        # Spectrum texture (resample to 512 bins, normalized)
+        # Spectrum texture (pre-computed indices)
         if len(fft_db) > 1:
-            indices = np.linspace(0, len(fft_db) - 1, 512)
-            self.spectrum = np.interp(indices, np.arange(len(fft_db)), fft_db).astype(np.float32)
+            self.spectrum = np.interp(self._spectrum_indices, self._fft_arange, fft_db).astype(np.float32)
 
     @staticmethod
     def list_devices():

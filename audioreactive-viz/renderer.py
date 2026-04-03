@@ -4,6 +4,7 @@ Handles ping-pong framebuffers and special dual-pass for reaction-diffusion.
 """
 
 import os
+import sys
 import moderngl
 import numpy as np
 from presets import MODE_REACTION
@@ -16,6 +17,7 @@ class Renderer:
         self.ctx = ctx
         self.width = width
         self.height = height
+        self._resolution = (float(width), float(height))
 
         # Load common GLSL header
         with open(os.path.join(SHADER_DIR, "common.glsl"), "r") as f:
@@ -88,23 +90,24 @@ class Renderer:
 
     def set_uniforms(self, prog, audio, preset, time_val):
         """Set all uniforms on a shader program."""
-        def _set(name, value):
+        uniforms = (
+            ('u_time', time_val),
+            ('u_resolution', self._resolution),
+            ('u_bass', audio.bass),
+            ('u_mid', audio.mid),
+            ('u_high', audio.high),
+            ('u_rms', audio.rms),
+            ('u_beat', audio.beat),
+            ('u_color1', preset['color1']),
+            ('u_color2', preset['color2']),
+            ('u_color3', preset['color3']),
+            ('u_params', preset['params']),
+            ('u_feedback_amt', preset['feedback']),
+            ('u_speed', preset['speed']),
+        )
+        for name, value in uniforms:
             if name in prog:
                 prog[name].value = value
-
-        _set('u_time', time_val)
-        _set('u_resolution', (float(self.width), float(self.height)))
-        _set('u_bass', audio.bass)
-        _set('u_mid', audio.mid)
-        _set('u_high', audio.high)
-        _set('u_rms', audio.rms)
-        _set('u_beat', audio.beat)
-        _set('u_color1', preset['color1'])
-        _set('u_color2', preset['color2'])
-        _set('u_color3', preset['color3'])
-        _set('u_params', preset['params'])
-        _set('u_feedback_amt', preset['feedback'])
-        _set('u_speed', preset['speed'])
 
         # Bind textures
         if 'u_spectrum' in prog:
@@ -234,6 +237,9 @@ class Renderer:
 
     def init_spout(self):
         """Initialize Spout sender (Windows only, graceful fallback)."""
+        if sys.platform != "win32":
+            self.spout_enabled = False
+            return
         try:
             import SpoutGL
             self.spout_sender = SpoutGL.SpoutSender()
@@ -241,7 +247,7 @@ class Renderer:
             self.spout_enabled = True
             print("[Spout] Sender initialized: AudioReactiveViz")
         except ImportError:
-            print("[Spout] SpoutGL not installed — Spout output disabled")
+            print("[Spout] SpoutGL not installed — install with: pip install SpoutGL")
             self.spout_enabled = False
         except Exception as e:
             print(f"[Spout] Init error: {e}")
